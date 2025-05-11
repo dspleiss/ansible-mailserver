@@ -1,6 +1,6 @@
----
+- name: mailserver installation
 - hosts: mailservers
-  become: true  # Ermöglicht die Ausführung von Befehlen mit sudo-Rechten
+  become: true  
   vars:
     mail_domain: "example.com" # Definieren Sie hier Ihre fiktive Domain
 
