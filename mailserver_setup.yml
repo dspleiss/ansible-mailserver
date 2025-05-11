@@ -1,4 +1,4 @@
-- name: mailserver installation
+- name: mailserver setup
 - hosts: mailservers
   become: true  
   vars:
