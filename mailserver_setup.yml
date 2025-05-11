@@ -2,7 +2,7 @@
 - hosts: mailservers
   become: true  
   vars:
-    mail_domain: "example.com" # Definieren Sie hier Ihre fiktive Domain
+    mail_domain: ".com"
 
   tasks:
     - name: Update package cache
@@ -15,23 +15,20 @@
         state: present
       notify:
         - restart postfix
-      when: ansible_hostname == "mailserver1" or ansible_hostname == "mailserver2"
 
-    - name: Configure Postfix (responsefile) - Internet Site
+    - name: Configure Postfix Internet Site
       debconf:
         name: postfix
         question: mail_server_type
         value: 'Internet Site'
         vtype: select
-      when: ansible_hostname == "mailserver1" or ansible_hostname == "mailserver2"
 
-    - name: Configure Postfix (responsefile) - System mail name
+    - name: Configure Postfix System mail name
       debconf:
         name: postfix
         question: mail_name
         value: "{{ ansible_hostname }}.{{ mail_domain }}"
         vtype: string
-      when: ansible_hostname == "mailserver1" or ansible_hostname == "mailserver2"
 
     - name: Install Dovecot
       apt:
@@ -42,7 +39,6 @@
         state: present
       notify:
         - restart dovecot
-      when: ansible_hostname == "mailserver1" or ansible_hostname == "mailserver2"
 
   handlers:
     - name: restart postfix
