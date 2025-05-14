@@ -2,12 +2,18 @@
 - hosts: mailservers
   become: true  
   vars:
-    mail_domain: ".com"
+    mail_domain: "123.com"
 
   tasks:
     - name: Update package cache
       apt:
         update_cache: yes
+
+    - name: Install mailutils
+      apt:
+        name: mailutils
+        state: present
+      become: true
 
     - name: Install Postfix
       apt:
@@ -22,6 +28,21 @@
         question: mail_server_type
         value: 'Internet Site'
         vtype: select
+
+    - name: Change ownership of debconf passwords.dat
+      file:
+        path: /var/cache/debconf/passwords.dat
+        owner: mailadmin
+        group: mailadmin
+      become: true
+      ignore_errors: yes
+
+    - name: Change permissions of debconf passwords.dat
+      file:
+        path: /var/cache/debconf/passwords.dat
+        mode: "0600"
+      become: true
+      ignore_errors: yes
 
     - name: Configure Postfix System mail name
       debconf:
@@ -39,6 +60,13 @@
         state: present
       notify:
         - restart dovecot
+
+    - name: Enable Dovecot protocols (IMAP, POP3, LMTP)
+      lineinfile:
+        path: /etc/dovecot/dovecot.conf
+        regexp: '^#protocols = '
+        line: "protocols = imap pop3 lmtp"
+      notify: restart dovecot
 
   handlers:
     - name: restart postfix
