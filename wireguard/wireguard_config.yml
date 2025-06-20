@@ -1,0 +1,83 @@
+---
+- name: Konfiguriere WireGuard VPN tunnel
+  hosts: routers
+  become: yes
+
+  # hole geheime Schlüssel aus verschlüsseltem Vault
+  vars_files:
+    - vars/secrets.yml #enthält private keys
+
+  vars:
+    router01_wg_ip: "10.0.0.1" 
+    router02_wg_ip: "10.0.0.2" 
+    wg_listen_port: 51820
+    router01_lan_cidr: "10.0.10.0/24" 
+    router02_lan_cidr: "10.0.20.0/24" 
+    router01_public_endpoint: "10.0.2.2:51820"
+    router01_public_key: "7XDJ5rA3eYQx3geA9u/Dq0htFP9gzSlLN6XlrlFMP2A="
+    router02_public_key: "5aPvrRtRnlXtRnHkv21JryXePAfZzs81FUhwEDb1aEo="
+
+  tasks:
+    - name: installiere WireGuard 
+      ansible.builtin.apt:
+        name: wireguard
+        state: present
+        update_cache: yes
+
+    - name: erstelle config ordner, falls nicht schon vorhanden
+      ansible.builtin.file:
+        path: /etc/wireguard
+        state: directory
+        mode: '0700'
+
+    - name: erstelle die wg0.conf aus dem Template
+      vars:
+        # weise die private keys zu
+        wg_private_key: >- 
+          {% if inventory_hostname == 'router01' %}{{ router01_private_key }}
+          {% else %}{{ router02_private_key }}{% endif %}
+        
+        # setze die wireguard ip adresse
+        wg_address: >- 
+          {% if inventory_hostname == 'router01' %}{{ router01_wg_ip }}/24
+          {% else %}{{ router02_wg_ip }}/24{% endif %}
+
+        # weise die public keys der gegenstelle zu
+        wg_peer_public_key: >- 
+          {% if inventory_hostname == 'router01' %}{{ router02_public_key }}
+          {% else %}{{ router01_public_key }}{% endif %}
+        
+        # erlaube IP des peers
+        wg_allowed_ips: >- 
+          {% if inventory_hostname == 'router01' %}{{ router02_wg_ip }}/32, {{ router02_lan_cidr }}
+          {% else %}{{ router01_wg_ip }}/32, {{ router01_lan_cidr }}{% endif %}
+
+      #die oben erzeugten variablen werden im wg0.conf.j2 angewendet und damit eine routerspezifische wg0.conf erstellt
+      ansible.builtin.template:
+        src: wg0.conf.j2
+        dest: /etc/wireguard/wg0.conf
+        owner: root
+        group: root
+        mode: '0600'
+      notify: Restart wg-quick@wg0
+
+    - name: Enable IP Forwarding
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+    - name: starte WireGuard
+      ansible.builtin.systemd:
+        name: wg-quick@wg0
+        state: started
+        enabled: yes
+
+  handlers:
+    # neustart des Diensted bei Änderungen
+    - name: Restart wg-quick@wg0
+      ansible.builtin.systemd:
+        name: wg-quick@wg0
+        state: restarted

@@ -1,0 +1,15 @@
+[Interface]
+PrivateKey = {{ wg_private_key }}
+Address = {{ wg_address }}
+ListenPort = {{ wg_listen_port }}
+
+PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE; iptables -A FORWARD -o wg0 -j ACCEPT
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o enp0s3 -j MASQUERADE; iptables -D FORWARD -o wg0 -j ACCEPT
+
+[Peer]
+PublicKey = {{ wg_peer_public_key }}
+AllowedIPs = {{ wg_allowed_ips }}
+{% if inventory_hostname == 'router02' %}
+Endpoint = {{ router01_public_endpoint }}
+PersistentKeepalive = 25
+{% endif %}

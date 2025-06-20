@@ -1,0 +1,33 @@
+mailadmin@router01:/etc/bind$ sudo cat /etc/bind/db.fachpra1.local
+$TTL 604800
+@       IN      SOA     router01.fachpra1.local. admin.fachpra1.local. (
+                             2025052902 ; Serial (YYYYMMDDNN, N für Revision)
+                       604800         ; Refresh
+                        86400         ; Retry
+                      2419200         ; Expire
+                        604800 )       ; Negative Cache TTL
+;
+@       IN      NS      router01.fachpra1.local. ; Dieser Server ist der Nameserver
+router01 IN     A       10.0.10.1   ; IP des DNS-Servers selbst (im LAN1)
+mailserver01 IN A       10.0.10.10
+client01 IN     A       10.0.10.11
+@       IN      MX      10      mailserver01.fachpra1.local.
+mailadmin@router01:/etc/bind$
+
+
+
+mailadmin@router02:~$ sudo cat /etc/bind/db.fachpra2.local
+$TTL 604800
+@       IN      SOA     router02.fachpra2.local. admin.fachpra2.local. (
+                             2025052902 ; Serial
+                       604800         ; Refresh
+                        86400         ; Retry
+                      2419200         ; Expire
+                        604800 )       ; Negative Cache TTL
+;
+@       IN      NS      router02.fachpra2.local.
+router02 IN     A       10.0.20.1
+mailserver02 IN A       10.0.20.10
+client02 IN     A       10.0.20.11
+@       IN      MX      10      mailserver02.fachpra2.local.
+mailadmin@router02:~$

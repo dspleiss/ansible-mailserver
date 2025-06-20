@@ -1,0 +1,101 @@
+#!/usr/sbin/nft -f
+     
+define INTERNET_TCP_PORTS = { 80, 443, 25, 465, 587, 143, 993, 110, 995, 22 }
+define INTERNET_UDP_PORTS = { 53, 123 }
+
+flush ruleset
+
+table inet filter {
+    # input chain: Eingehender Verkehr fuer die Router
+    chain input {
+        type filter hook input priority 10; 
+        policy drop;
+
+        #Regel 1: loopback erlauben
+        iifname "lo" accept 
+
+        #Regel 2: Spoofing-Schutz für LAN          
+        iifname "enp0s8" ip saddr != {{ lan_cidr }} drop
+
+        #Regel 3: Spoofing-Schutz für WireGuard    
+ #       iifname "wg0" ip saddr != {{ dest_lan_cidr }} drop
+
+        #Regel 4: bestehende Verbindungen erlauben
+        ct state established,related accept
+
+        #Regel 5: ssh erlauben
+        tcp dport 22 ct state new,established,related accept
+ 
+        #Regel 6: DNS UDP erlauben
+        udp dport 53 ct state new,established,related accept 
+
+        #Regel 7: DNS TCP erlauben
+        tcp dport 53 ct state new,established,related accept 
+
+        #Regel 8: Wireguard erlauben
+        udp dport 51820 ct state new,established,related accept
+
+        #Regel 9: ping
+        ip protocol icmp accept
+
+        #Regel 10 Logging und Drop                   NEU TESTEN
+        log prefix "DROP input: " flags all counter
+  #      drop
+    }
+    # forward chain: Verkehr, der durch den Router geroutet wird
+    chain forward {
+      type filter hook forward priority 10;
+      policy drop;
+      ct state established,related accept
+
+      #regel 1: LAN zu WAN
+      iifname "enp0s8" oifname "enp0s3" ct state new,established,related accept
+
+      #regel 2: rückverkehr zu regel 1
+      #oifname "enp0s8" iifname "enp0s3" ct state established,related accept
+
+      #regel 3: WG zu LAN, TCP Ports
+      iifname "wg0" oifname "enp0s8" ct state new,established,related tcp dport $INTERNET_TCP_PORTS accept
+
+      #regel 4: WG zu LAN, UDP Ports
+      iifname "wg0" oifname "enp0s8" ip saddr {{ dest_lan_cidr }} ip daddr {{ lan_cidr }} ct state new udp dport $INTERNET_UDP_PORTS accept
+
+      #regel 5: Rückkanal
+      #iifname "wg0" oifname "enp0s8" ip saddr {{ dest_lan_cidr }} ip daddr {{ lan_cidr }} ct state established,related accept
+
+      #regel 6: ping
+      iifname "wg0" oifname "enp0s8" ct state new ip protocol icmp accept 
+            
+      #regel 7: LAN zu WG, TCP Ports
+      iifname "enp0s8" oifname "wg0" ip saddr {{ lan_cidr }} ip daddr {{ dest_lan_cidr }} ct state new tcp dport $INTERNET_TCP_PORTS accept
+
+      #regel 8: LAN zu WG, UDP Ports
+      iifname "enp0s8" oifname "wg0" ip saddr {{ lan_cidr }} ip daddr {{ dest_lan_cidr }} ct state new udp dport $INTERNET_UDP_PORTS accept
+
+      #regel 9: Rückkanal
+      #iifname "enp0s8" oifname "wg0" ct state established,related accept
+            
+      #regel 10: ping 
+      iifname "enp0s8" oifname "wg0" ct state new ip protocol icmp accept
+            
+      #Regel 11: Logging und Drop            NEU TESTEN
+      log prefix "DROP forward: " flags all counter
+  #    drop
+     }
+
+    # output chain: Ausgehender Verkehr vom Router selbst
+    chain output {
+        type filter hook output priority 10;
+        policy accept;
+    }
+}
+
+table inet nat {
+    chain postrouting {
+        type nat hook postrouting priority 100;
+        policy accept;
+
+        # Masquerading über WAN
+        oifname "enp0s3" masquerade
+    }
+}

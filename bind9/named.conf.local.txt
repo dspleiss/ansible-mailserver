@@ -1,0 +1,76 @@
+mailadmin@router01:/etc/bind$ sudo cat /etc/bind/named.conf.local
+//
+// Do any local configuration here
+//
+
+// Consider adding the 1918 zones here, if they are not used in your
+// organization
+//include "/etc/bind/zones.rfc1918";
+
+// Master
+zone "fachpra1.local" {
+    type master;
+    file "/etc/bind/db.fachpra1.local"; 
+    allow-update { none; }; 
+};
+
+// Reverse-Zone 
+zone "10.0.10.in-addr.arpa" { 
+    type master;
+    file "/etc/bind/db.10.0.10"; // Pfad zur Reverse-Zonendatei
+    allow-update { none; };
+};
+
+// Conditional Forwarding für fachpra2.local
+zone "fachpra2.local" {
+    type forward;
+    forwarders { 10.0.20.1; }; 
+    forward only;
+};
+
+// Conditional Forwarding für Reverse-Zone
+zone "20.0.10.in-addr.arpa" { 
+    type forward;
+    forwarders { 10.0.20.1; };
+    forward only;
+};
+mailadmin@router01:/etc/bind$
+
+
+mailadmin@router02:~$ sudo cat /etc/bind/named.conf.local
+//
+// Do any local configuration here
+//
+
+// Consider adding the 1918 zones here, if they are not used in your
+// organization
+//include "/etc/bind/zones.rfc1918";
+
+// master
+zone "fachpra2.local" {
+    type master;
+    file "/etc/bind/db.fachpra2.local";
+    allow-update { none; };
+};
+
+// Reverse-Zone 
+zone "20.0.10.in-addr.arpa" {
+    type master;
+    file "/etc/bind/db.10.0.20";
+    allow-update { none; };
+};
+
+// Conditional Forwarding für fachpra1.locl
+zone "fachpra1.local" {
+    type forward;
+    forwarders { 10.0.10.1; }; 
+    forward only;
+};
+
+// Conditional Forwarding für Reverse-Zone
+zone "10.0.10.in-addr.arpa" { 
+    type forward;
+    forwarders { 10.0.10.1; };
+    forward only;
+};
+

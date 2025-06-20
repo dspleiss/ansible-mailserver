@@ -1,0 +1,37 @@
+---
+- name: Router Firewall Konfiguration mit nftables
+  hosts: routers
+  become: yes
+
+  tasks:
+    - name: install nftables
+      ansible.builtin.apt:
+        name: nftables
+        state: present
+        update_cache: yes
+
+    - name: aktiviere IP-Forwarding 
+      ansible.builtin.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        state: present
+        reload: yes
+        sysctl_file: /etc/sysctl.conf
+
+    - name: erstelle nftables.conf aus Template
+      ansible.builtin.template:
+        src: nftables.conf.j2 
+        dest: /etc/nftables.conf
+        owner: root
+        group: root
+        mode: '0640'
+
+    - name: lade nftables.conf
+      ansible.builtin.command: nft -f /etc/nftables.conf
+      changed_when: false
+
+    - name: starte nftables
+      ansible.builtin.systemd:
+        name: nftables
+        state: started
+        enabled: true

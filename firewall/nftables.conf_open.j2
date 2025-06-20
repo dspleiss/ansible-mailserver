@@ -1,0 +1,61 @@
+#!/usr/sbin/nft -f
+
+define INTERNET_TCP_PORTS = { 80, 443, 25, 465, 587, 143, 993, 110, 995, 22 }
+define INTERNET_UDP_PORTS = { 53, 123 }
+
+flush ruleset
+
+table inet filter {
+    chain input {
+        type filter hook input priority 10;
+        policy drop; # Standard: Alles ablehnen, was zum Router selbst geht
+
+        iifname "lo" accept
+        ct state {established, related} accept # Diese Regel nach oben verschoben
+
+        # LAN Spoofing-Schutz (optional, kann vorerst auskommentiert werden, wenn es Probleme macht)
+        # iifname "enp0s8" ip saddr != {{ lan_cidr }} drop
+
+        # WireGuard UDP Port 51820 erlauben
+        udp dport 51820 ct state new,established accept
+
+        # SSH (Port 22) erlauben
+        tcp dport 22 ct state new,established accept
+
+        # DNS (Port 53) erlauben (UDP und TCP)
+        udp dport 53 ct state new,established accept
+        tcp dport 53 ct state new,established accept
+
+        # ICMP (Ping) erlauben
+        ip protocol icmp accept
+
+        log prefix "DROP input: " flags all counter
+        drop
+    }
+
+    chain forward {
+        type filter hook forward priority 10;
+        policy accept; # <-- HIER IST DIE WICHTIGSTE ÄNDERUNG FÜR DEN TEST! ALLES DURCHLASSEN!
+
+        # ALLE ANDEREN FORWARD-REGELN IN DIESER PHASE ENTFERNEN ODER AUSKOMMENTIEREN!
+        # z.B.:
+        # iifname "enp0s8" oifname "enp0s3" ct state new,established,related accept
+        # ...etc.
+        # log prefix "DROP forward: " flags all counter
+        # drop
+    }
+
+    chain output {
+        type filter hook output priority 10;
+        policy accept;
+    }
+}
+
+table inet nat {
+    chain postrouting {
+        type nat hook postrouting priority 100;
+        policy accept;
+
+        oifname "enp0s3" masquerade
+    }
+}

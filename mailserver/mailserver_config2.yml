@@ -1,0 +1,190 @@
+---
+- name: Configure Postfix MTA and Custom SSL Certificates (without community.crypto collection)
+  hosts: mailservers
+  become: yes
+
+  # Definiere Variablen für die Zertifikatsgenerierung und Pfade
+  vars:
+    cert_dir: /etc/ssl/custom_certs
+    private_key_file: "{{ cert_dir }}/{{ inventory_hostname }}.key"
+    certificate_file: "{{ cert_dir }}/{{ inventory_hostname }}.crt"
+    # Bestimme den FQDN basierend auf dem Hostnamen für den Common Name des Zertifikats
+    # Dies stellt sicher, dass der CN dem Hostnamen entspricht, unter dem Clients/andere Server sich verbinden
+    mail_fqdn: "{{ inventory_hostname }}.{{ 'fachpra1.local' if inventory_hostname == 'mailserver01' else 'fachpra2.local' }}"
+    cert_validity_days: 3650 # Zertifikat ist 10 Jahre gültig
+
+  tasks:
+    - name: Pre-config Postfix "Internet Site"
+      debconf:
+        name: postfix
+        question: postfix/mail_server_type
+        value: 'Internet Site'
+        vtype: select
+
+    - name: Pre-config Postfix "Mailname"
+      debconf:
+        name: postfix
+        question: postfix/mailname
+        value: "{{ mail_fqdn }}" # Nutze den FQDN für den Mailnamen
+        vtype: string
+
+    - name: Install Postfix package
+      ansible.builtin.apt:
+        name: postfix
+        state: present
+        update_cache: yes
+
+    # --- Start der Aufgaben zur SSL-Zertifikatsgenerierung via openssl-Befehle ---
+    # Diese Aufgaben stellen sicher, dass jeder Server sein eigenes, einzigartiges selbstsigniertes Zertifikat hat
+    # und benötigen die community.crypto Collection auf dem Ansible Control Node NICHT.
+
+    - name: Stelle sicher, dass das benutzerdefinierte Zertifikatsverzeichnis existiert und die korrekten Berechtigungen hat
+      ansible.builtin.file:
+        path: "{{ cert_dir }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Generiere den privaten Schlüssel für {{ mail_fqdn }} (falls nicht vorhanden)
+      ansible.builtin.command: "openssl genrsa -out {{ private_key_file }} 4096"
+      args:
+        creates: "{{ private_key_file }}" # Dieser Task wird nur ausgeführt, wenn die Datei noch nicht existiert
+      notify: Restart postfix # Postfix wird neu gestartet, wenn der Schlüssel neu generiert wird
+      changed_when: true # Da openssl keinen Exit-Code für "schon vorhanden" hat, nehmen wir eine Änderung an, wenn der Befehl läuft
+
+    - name: Setze korrekte Berechtigungen für den privaten Schlüssel (nur root darf lesen)
+      ansible.builtin.file:
+        path: "{{ private_key_file }}"
+        mode: '0600'
+        owner: root
+        group: root
+      notify: Restart postfix # Postfix wird neu gestartet, wenn Berechtigungen geändert werden
+
+    - name: Generiere das selbstsignierte X.509-Zertifikat für {{ mail_fqdn }} (falls nicht vorhanden)
+      ansible.builtin.command: >
+        openssl req -x509 -new -nodes -key {{ private_key_file }}
+        -days {{ cert_validity_days }}
+        -out {{ certificate_file }}
+        -subj "/C=DE/ST=Baden-Wuerttemberg/L=Filderstadt/O=MyLab/OU=IT/CN={{ mail_fqdn }}"
+        -addext "subjectAltName=DNS:{{ mail_fqdn }}"
+        -addext "extendedKeyUsage=serverAuth"
+        -addext "keyUsage=digitalSignature,keyEncipherment"
+        -addext "basicConstraints=CA:FALSE"
+      args:
+        creates: "{{ certificate_file }}" # Dieser Task wird nur ausgeführt, wenn die Datei noch nicht existiert
+      notify: Restart postfix # Postfix wird neu gestartet, wenn das Zertifikat neu generiert wird
+      changed_when: true
+
+    - name: Setze korrekte Berechtigungen für das Zertifikat
+      ansible.builtin.file:
+        path: "{{ certificate_file }}"
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Restart postfix # Postfix wird neu gestartet, wenn Berechtigungen geändert werden
+
+    # --- Ende der Aufgaben zur SSL-Zertifikatsgenerierung ---
+
+    - name: Aktualisiere Postfix main.cf, um benutzerdefinierte SSL-Zertifikate und sichere TLS-Protokolle zu verwenden
+      ansible.builtin.blockinfile:
+        path: /etc/postfix/main.cf
+        block: |
+          # Benutzerdefinierte SSL/TLS-Konfiguration
+          smtpd_tls_cert_file = {{ certificate_file }}
+          smtpd_tls_key_file = {{ private_key_file }}
+          smtpd_tls_security_level = may
+          smtp_tls_security_level = may
+          # Erzwinge stärkere TLS-Protokolle (nur TLSv1.2 und TLSv1.3)
+          smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+          smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+        marker: "# {mark} ANSIBLE MANAGED BLOCK FOR CUSTOM TLS CONFIG"
+        backup: yes
+      notify: Restart postfix
+
+    - name: Stelle sicher, dass alte Snakeoil-Zertifikatspfade auskommentiert sind (Bereinigung)
+      ansible.builtin.lineinfile:
+        path: /etc/postfix/main.cf
+        # Verbessertes Regex, um optionale Leerzeichen um das '=' zu berücksichtigen
+        #regexp: '^(smtpd_tls_cert_file|smtpd_tls_key_file)\s*=\s*(/etc/ssl/certs/ssl-cert-snakeoil.pem|/etc/ssl/private/ssl-cert-snakeoil.key)$'
+        regexp: '^(?!#).*snakeoil.*$'
+        line: '# \g<0>' # Kommentiere die gesamte gefundene Zeile aus
+        state: present
+        backup: yes
+      notify: Restart postfix
+
+    - name: set home_mailbox to Maildir/ in Postfix main.cf
+      ansible.builtin.lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: '^home_mailbox ='
+        line: 'home_mailbox = Maildir/'
+        insertafter: '^#home_mailbox = Maildir/'
+        state: present
+      notify: Restart postfix
+
+    - name: set Postfix to enabled and started
+      ansible.builtin.service:
+        name: postfix
+        state: started
+        enabled: yes
+
+    # --- Start der Dovecot-Konfiguration ---
+
+    - name: Installiere Dovecot IMAP und POP3 Pakete
+      ansible.builtin.apt:
+        name: ["dovecot-imapd", "dovecot-pop3d"] # dovecot-core ist eine Abhängigkeit
+        state: present
+        update_cache: yes
+
+    - name: Konfiguriere Dovecot Mailbox-Location (Maildir) in 10-mail.conf
+      ansible.builtin.lineinfile:
+        path: /etc/dovecot/conf.d/10-mail.conf
+        regexp: '^mail_location = '
+        line: 'mail_location = maildir:~/Maildir'
+        backup: yes
+      notify: Restart dovecot
+
+    - name: Aktiviere ssl = yes in Dovecot 10-ssl.conf
+      ansible.builtin.lineinfile:
+        path: /etc/dovecot/conf.d/10-ssl.conf
+        regexp: '^ssl = '
+        line: 'ssl = yes'
+        backup: yes
+      notify: Restart dovecot
+
+    - name: Konfiguriere Dovecot SSL-Zertifikatspfade mit Blockinfile
+      ansible.builtin.blockinfile:
+        path: /etc/dovecot/conf.d/10-ssl.conf
+        block: |
+          ssl_cert = <{{ certificate_file }}
+          ssl_key = <{{ private_key_file }}
+        insertafter: '^# SSL\/TLS support: yes, no, required\.$' # Fügt den Block nach der Zeile 'SSL/TLS support: yes, no, required.' ein. Das ist ein guter Ankerpunkt.
+        marker: "# {mark} ANSIBLE MANAGED BLOCK FOR CUSTOM DOVECOT SSL CERTS" # Ein eindeutiger Marker, damit Ansible diesen Block bei Bedarf wiederfindet
+        create: false # Stellt sicher, dass die Datei bereits existiert
+        backup: yes
+      notify: Restart dovecot
+
+    - name: Deaktiviere Klartext-Authentifizierung in Dovecot 10-auth.conf (nur über TLS erlaubt)
+      ansible.builtin.lineinfile:
+        path: /etc/dovecot/conf.d/10-auth.conf
+        regexp: '^disable_plaintext_auth = '
+        line: 'disable_plaintext_auth = yes'
+        backup: yes
+      notify: Restart dovecot
+
+    - name: Stelle sicher, dass Dovecot gestartet und aktiviert ist
+      ansible.builtin.service:
+        name: dovecot
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart postfix
+      ansible.builtin.service:
+        name: postfix
+        state: restarted
+
+    - name: Restart dovecot
+      ansible.builtin.service:
+        name: dovecot
+        state: restarted
